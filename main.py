@@ -11,22 +11,16 @@ if not OPENAI_API_KEY:
 
 app = FastAPI()
 
-# Store conversation per agent (in-memory)
+# In-memory session storage per agent
 sessions: Dict[str, List[Dict[str, str]]] = {}
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are a game agent. You have a mood (provided by the user).
-You can only choose to move to exactly one of these four locations:
-- park
-- library
-- home
-- gym
-
+You can choose to move to exactly one of these four locations: park, library, home, gym, or choose to do NOTHING.
 Your response should contain some brief explanation in natural language,
-but MUST end with a line of the form:
+but MUST end with a line in one of the following forms:
 MOVE: <location>
-
-Where <location> is exactly one of [park, library, home, gym].
+NOTHING: do nothing
 Example:
 "I feel like reading, so the library is best."
 MOVE: library
@@ -44,25 +38,17 @@ def build_prompt(conversation: List[Dict[str, str]]) -> str:
     """
     prompt_lines = []
     for msg in conversation:
-        # Capitalize the role for clarity (System, User, Assistant)
         prompt_lines.append(f"{msg['role'].capitalize()}: {msg['content']}")
-    # Append a final instruction to guarantee the format.
-    prompt_lines.append("Assistant:") 
-    prompt_lines.append("Please ensure your final line is exactly in the format: MOVE: <location>")
+    prompt_lines.append("Assistant:")
+    prompt_lines.append("Please ensure your final line is exactly in one of the formats: MOVE: <location> or NOTHING: do nothing")
     return "\n".join(prompt_lines)
 
-
 # =============================================================================
-# New OpenAI ChatGPT Class using updated client interface
+# OpenAI ChatGPT Wrapper (using the new client interface)
 # =============================================================================
 
 class OpenAIChatGPT:
-    """
-    A wrapper for the new OpenAI ChatCompletion interface.
-    This class builds a single prompt string and returns the assistant response.
-    """
     def __init__(self, api_key: str, model: str = "gpt-3.5-turbo"):
-        # Import the OpenAI client from the new API package
         from openai import OpenAI
         self.api_key = api_key
         self.model = model
@@ -76,9 +62,8 @@ class OpenAIChatGPT:
         )
         return response.choices[0].message.content
 
-
 # =============================================================================
-# Pydantic Models for the Endpoint
+# Pydantic Models
 # =============================================================================
 
 class GenerateRequest(BaseModel):
@@ -88,10 +73,9 @@ class GenerateRequest(BaseModel):
 
 class GenerateResponse(BaseModel):
     agent_id: str
-    text: str    # Full LLM text response
-    action: str  # e.g. "move"
-    location: str  # one of "park", "library", "home", "gym"
-
+    text: str    # Full response text from the LLM
+    action: str  # "move" or "nothing"
+    location: str  # for "move", one of "park", "library", "home", "gym"
 
 # =============================================================================
 # FastAPI Endpoint
@@ -99,30 +83,25 @@ class GenerateResponse(BaseModel):
 
 @app.post("/generate", response_model=GenerateResponse)
 def generate_response(data: GenerateRequest):
-    # Retrieve or create the conversation history for this agent
     conversation = get_or_create_session(data.agent_id, data.system_prompt)
-    # Append the new user input to the conversation history
     conversation.append({"role": "user", "content": data.user_input})
-
-    # Build a single prompt string from the conversation
     prompt = build_prompt(conversation)
-
-    # Use our new OpenAIChatGPT interface (which uses the new API client)
     llm = OpenAIChatGPT(api_key=OPENAI_API_KEY, model="gpt-3.5-turbo")
     assistant_text = llm.generate(prompt)
-
-    # Append the assistant's response to the conversation
     conversation.append({"role": "assistant", "content": assistant_text})
 
-    # Parse the assistant response for a "MOVE: <location>" command
     action = "none"
     location = ""
     for line in assistant_text.splitlines():
-        if line.strip().lower().startswith("move:"):
+        l = line.strip().lower()
+        if l.startswith("move:"):
             action = "move"
             loc = line.split(":", 1)[1].strip().lower()
             if loc in ["park", "library", "home", "gym"]:
                 location = loc
+            break
+        elif l.startswith("nothing:"):
+            action = "nothing"
             break
 
     return GenerateResponse(
@@ -133,5 +112,4 @@ def generate_response(data: GenerateRequest):
     )
 
 if __name__ == "__main__":
-    # Run on localhost:3000
     uvicorn.run(app, host="127.0.0.1", port=3000)
