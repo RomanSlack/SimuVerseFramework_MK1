@@ -21,7 +21,7 @@ sessions: Dict[str, List[Dict[str, str]]] = {}
 # -------------------------------------------------------------------------
 DEFAULT_SYSTEM_PROMPT = """\
 You are a game agent. You have a primary goal: collaborate with other agents to find the missing O2 regulator part on this Mars base.
-You can MOVE to exactly one of these four locations: park, library, home, gym (or move to another agent).
+You can MOVE to exactly one of these four locations: park, library, 02_Regulator_Room, gym (or move to another agent).
 You can choose to do NOTHING, or you can CONVERSE with another agent. 
 You must always provide at least one sentence of reasoning before your final line. 
 Your final line must be in one of the forms:
@@ -82,7 +82,7 @@ class GenerateResponse(BaseModel):
     agent_id: str
     text: str    # Full response text from the LLM
     action: str  # "move", "nothing", or "converse"
-    location: str  # for "move": one of "park", "library", "home", "gym" or agent name; for "converse": agent name
+    location: str  # for "move": one of "park", "library", "02_Regulator_Room", "gym" or agent name; for "converse": agent name
 
 # =============================================================================
 # FastAPI Endpoint
