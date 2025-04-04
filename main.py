@@ -3,11 +3,13 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict
+from dotenv import load_dotenv
+load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise EnvironmentError("Please set the OPENAI_API_KEY environment variable.")
-
+print("OPENAI_API_KEY from env:", OPENAI_API_KEY)
 app = FastAPI()
 
 # Store conversation per agent
