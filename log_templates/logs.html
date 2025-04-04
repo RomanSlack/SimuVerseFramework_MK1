@@ -1,0 +1,169 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SimuVerse Logs</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script>
+        // Auto-refresh every 5 seconds
+        let autoRefresh = false;
+        let refreshInterval;
+        
+        function toggleAutoRefresh() {
+            autoRefresh = !autoRefresh;
+            const btn = document.getElementById('auto-refresh-btn');
+            
+            if (autoRefresh) {
+                btn.innerHTML = '<i class="fas fa-pause"></i> Pause Auto-Refresh';
+                btn.classList.add('active');
+                refreshInterval = setInterval(() => {
+                    fetchData();
+                }, 5000);
+            } else {
+                btn.innerHTML = '<i class="fas fa-sync"></i> Enable Auto-Refresh';
+                btn.classList.remove('active');
+                clearInterval(refreshInterval);
+            }
+        }
+        
+        function fetchData() {
+            const currentUrl = window.location.href;
+            fetch(currentUrl)
+                .then(response => response.text())
+                .then(html => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    
+                    // Update agent list
+                    const oldSidebar = document.querySelector('.agent-list');
+                    const newSidebar = doc.querySelector('.agent-list');
+                    if (oldSidebar && newSidebar) {
+                        oldSidebar.innerHTML = newSidebar.innerHTML;
+                    }
+                    
+                    // Update content
+                    const oldContent = document.querySelector('.log-entries');
+                    const newContent = doc.querySelector('.log-entries');
+                    if (oldContent && newContent) {
+                        oldContent.innerHTML = newContent.innerHTML;
+                    }
+                });
+        }
+        
+        function clearLogs() {
+            if (confirm('Are you sure you want to clear all logs?')) {
+                fetch('/clear_logs', {
+                    method: 'POST'
+                }).then(response => {
+                    window.location.reload();
+                });
+            }
+        }
+        
+        function toggleView(view) {
+            const logEntries = document.querySelector('.log-entries');
+            const standardBtn = document.getElementById('standard-view-btn');
+            const chatBtn = document.getElementById('chat-view-btn');
+            
+            if (view === 'chat') {
+                logEntries.classList.add('chat-view');
+                chatBtn.classList.add('active');
+                standardBtn.classList.remove('active');
+                localStorage.setItem('viewMode', 'chat');
+            } else {
+                logEntries.classList.remove('chat-view');
+                standardBtn.classList.add('active');
+                chatBtn.classList.remove('active');
+                localStorage.setItem('viewMode', 'standard');
+            }
+        }
+        
+        window.onload = function() {
+            // Set up view mode based on localStorage
+            const viewMode = localStorage.getItem('viewMode') || 'standard';
+            toggleView(viewMode);
+            
+            // Scroll to bottom for chat view
+            if (viewMode === 'chat') {
+                const logEntries = document.querySelector('.log-entries');
+                if (logEntries) {
+                    logEntries.scrollTop = logEntries.scrollHeight;
+                }
+            }
+        };
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h2>SimuVerse Logs</h2>
+            <button class="button refresh" onclick="window.location.reload()">
+                <i class="fas fa-sync"></i> Refresh
+            </button>
+            <div class="agent-list">
+                <h3>Agents</h3>
+                {% for agent_id in agents %}
+                    <button class="agent-btn {% if agent_id == selected_agent %}active{% endif %}" 
+                            onclick="window.location.href='?agent={{ agent_id }}'">
+                        <i class="fas fa-user-astronaut"></i> {{ agent_id }}
+                    </button>
+                {% endfor %}
+            </div>
+            <div class="footer">
+                SimuVerse Framework v1.0
+            </div>
+        </div>
+        
+        <div class="content">
+            {% if selected_agent %}
+                <div class="header">
+                    <h1><i class="fas fa-user-astronaut"></i> Agent: {{ selected_agent }}</h1>
+                    <div>
+                        <button id="auto-refresh-btn" class="button" onclick="toggleAutoRefresh()">
+                            <i class="fas fa-sync"></i> Enable Auto-Refresh
+                        </button>
+                        <button class="button clear" onclick="clearLogs()">
+                            <i class="fas fa-trash"></i> Clear Logs
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="actions-bar">
+                    <div class="toggle-view">
+                        <button id="standard-view-btn" class="toggle-button active" onclick="toggleView('standard')">
+                            <i class="fas fa-list"></i> Standard View
+                        </button>
+                        <button id="chat-view-btn" class="toggle-button" onclick="toggleView('chat')">
+                            <i class="fas fa-comments"></i> Chat View
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="log-entries">
+                    {% for log in agent_logs %}
+                        <div class="log-entry {{ log.type }}">
+                            <div class="timestamp">{{ log.timestamp }}</div>
+                            <div class="event-type {{ log.type }}">{{ log.type }}</div>
+                            {% if log.type == 'user_input' %}
+                                <div><strong>User:</strong> {{ log.details.input }}</div>
+                            {% elif log.type == 'response' %}
+                                <div><strong>Assistant:</strong> {{ log.details.text }}</div>
+                                <div><strong>Action:</strong> {{ log.details.action }} {% if log.details.location %}({{ log.details.location }}){% endif %}</div>
+                            {% else %}
+                                <pre class="details">{{ log.details|string }}</pre>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="no-agent-selected">
+                    <i class="fas fa-user-astronaut"></i>
+                    <h2>Select an agent from the sidebar to view logs</h2>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

@@ -1,12 +1,9 @@
 import os
+from fastapi.responses import HTMLResponse
 import uvicorn
-import threading
-import time
+import json
 import datetime
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from typing import List, Dict, Any
 from dotenv import load_dotenv
@@ -23,6 +20,20 @@ sessions: Dict[str, List[Dict[str, str]]] = {}
 
 # Logging system
 logs: Dict[str, List[Dict[str, Any]]] = {}
+logs_file = "agent_logs.json"
+
+# Load existing logs if file exists
+if os.path.exists(logs_file):
+    try:
+        with open(logs_file, "r") as f:
+            logs = json.load(f)
+    except:
+        logs = {}
+
+def save_logs():
+    """Save logs to file"""
+    with open(logs_file, "w") as f:
+        json.dump(logs, f, indent=2)
 
 def log_event(agent_id: str, event_type: str, details: Dict[str, Any]):
     """
@@ -36,108 +47,28 @@ def log_event(agent_id: str, event_type: str, details: Dict[str, Any]):
         "type": event_type,
         "details": details
     })
+    
+    # Save logs to file after each event
+    save_logs()
 
-# Setup templates directory for the chat interface
-templates = Jinja2Templates(directory="templates")
+# API endpoint to get all logs
+@app.get("/api/logs")
+def get_logs():
+    return logs
 
-# Create templates directory if it doesn't exist
-os.makedirs("templates", exist_ok=True)
-
-# Create the HTML template for the chat interface
-with open("templates/logs.html", "w") as f:
-    f.write("""
-<!DOCTYPE html>
-<html>
-<head>
-    <title>SimuVerse Logs</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            height: 100vh;
-        }
-        #sidebar {
-            width: 200px;
-            background-color: #f0f0f0;
-            padding: 20px;
-            overflow-y: auto;
-        }
-        #content {
-            flex-grow: 1;
-            padding: 20px;
-            overflow-y: auto;
-        }
-        .agent-btn {
-            display: block;
-            width: 100%;
-            padding: 10px;
-            margin-bottom: 10px;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        .log-entry {
-            border-bottom: 1px solid #ddd;
-            padding: 10px 0;
-        }
-        .timestamp {
-            color: #888;
-            font-size: 0.8em;
-        }
-        .event-type {
-            font-weight: bold;
-            color: #4CAF50;
-        }
-        .details {
-            margin-top: 5px;
-            white-space: pre-wrap;
-        }
-        #refresh-btn {
-            margin-bottom: 20px;
-            padding: 10px;
-            background-color: #2196F3;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-    </style>
-</head>
-<body>
-    <div id="sidebar">
-        <button id="refresh-btn" onclick="location.reload()">Refresh</button>
-        <h3>Agents</h3>
-        {% for agent_id in logs %}
-            <button class="agent-btn" onclick="location.href='?agent={{ agent_id }}'">{{ agent_id }}</button>
-        {% endfor %}
-    </div>
-    <div id="content">
-        {% if selected_agent %}
-            <h2>Logs for Agent: {{ selected_agent }}</h2>
-            {% for log in agent_logs %}
-                <div class="log-entry">
-                    <div class="timestamp">{{ log.timestamp }}</div>
-                    <div class="event-type">{{ log.type }}</div>
-                    <div class="details">{{ log.details|string }}</div>
-                </div>
-            {% endfor %}
-        {% else %}
-            <h2>Select an agent from the sidebar to view logs</h2>
-        {% endif %}
-    </div>
-</body>
-</html>
-    """)
+# API endpoint to get logs for a specific agent
+@app.get("/api/logs/{agent_id}")
+def get_agent_logs(agent_id: str):
+    if agent_id in logs:
+        return logs[agent_id]
+    raise HTTPException(status_code=404, detail="Agent not found")
 
 # Add a route to clear logs
 @app.post("/clear_logs")
 def clear_logs():
     global logs
     logs = {}
+    save_logs()
     return {"status": "success", "message": "All logs cleared"}
 
 def get_or_create_session(agent_id: str, system_prompt: str) -> List[Dict[str, str]]:
@@ -295,30 +226,8 @@ def reset_system():
     global sessions, logs
     sessions = {}
     logs = {}
+    save_logs()
     return {"status": "success", "message": "System reset successfully"}
 
 if __name__ == "__main__":
-    # Run the app on a separate port (3001) for the logs interface
-    # This allows the main API to run on port 3000
-    import threading
-    
-    def run_main_app():
-        uvicorn.run(app, host="127.0.0.1", port=3000)
-    
-    def run_logs_app():
-        uvicorn.run(app, host="127.0.0.1", port=3001)
-    
-    # Start both servers in separate threads
-    main_thread = threading.Thread(target=run_main_app, daemon=True)
-    logs_thread = threading.Thread(target=run_logs_app, daemon=True)
-    
-    main_thread.start()
-    logs_thread.start()
-    
-    try:
-        # Keep the main thread alive
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("Shutting down servers...")
-        # The daemon threads will be terminated when the main thread exits
+    uvicorn.run(app, host="127.0.0.1", port=3000)
