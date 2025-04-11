@@ -54,15 +54,28 @@ def get_or_create_session(agent_id: str, system_prompt: str, task: str) -> List[
 # Forwarded conversation messages (marked with "[Conversation") are grouped.
 # ----------------------------------------------------------------------------
 def build_prompt(conversation: List[Dict[str, str]]) -> str:
+    # Identify conversation messages
     convo_msgs = [msg["content"] for msg in conversation if msg["content"].startswith("[Conversation")]
     normal_msgs = [f"{msg['role'].capitalize()}: {msg['content']}" for msg in conversation if not msg["content"].startswith("[Conversation")]
     prompt_lines = []
+    
+    # Check if we're in a conversation
+    in_conversation = any(msg["content"].startswith("[CONVERSE mode with") for msg in conversation if msg["role"] == "user")
+    
     if convo_msgs:
         prompt_lines.append("Conversation History:")
         prompt_lines.extend(convo_msgs)
+    
     prompt_lines.extend(normal_msgs)
     prompt_lines.append("Assistant:")
-    prompt_lines.append("Remember: Provide at least one sentence of reasoning and end your answer with MOVE:, NOTHING:, or CONVERSE: (with no extra text).")
+    
+    if in_conversation:
+        # Modify the reminder to encourage information sharing in conversations
+        prompt_lines.append("Remember: You are in a conversation. Share specific information you know that might help the other agent. "
+                        "Be direct and to the point. End your answer with CONVERSE: (with no extra text).")
+    else:
+        prompt_lines.append("Remember: Provide at least one sentence of reasoning and end your answer with MOVE:, NOTHING:, or CONVERSE: (with no extra text).")
+    
     return "\n".join(prompt_lines)
 
 # ----------------------------------------------------------------------------
@@ -101,6 +114,25 @@ class GenerateResponse(BaseModel):
 # ----------------------------------------------------------------------------
 @app.post("/generate", response_model=GenerateResponse)
 def generate_response(data: GenerateRequest):
+    # Check if this is the end of a conversation (when rounds left = 0)
+    if data.user_input.startswith("[CONVERSE mode with") and "rounds left: 0]" in data.user_input:
+        # Extract the agent name from the input
+        target_agent = data.user_input.split("with ")[1].split(",")[0]
+        
+        # Log the conversation end event
+        log_event(data.agent_id, "conversation_end", {
+            "with_agent": target_agent,
+            "message": f"Conversation with {target_agent} has ended."
+        })
+        
+        # Also send this notification to the other agent - they should know it ended too
+        # Only if the other agent exists in sessions
+        if target_agent in sessions:
+            log_event(target_agent, "conversation_end", {
+                "with_agent": data.agent_id,
+                "message": f"Conversation with {data.agent_id} has ended."
+            })
+    
     log_event(data.agent_id, "user_input", {
         "input": data.user_input,
         "system_prompt": data.system_prompt,
@@ -151,16 +183,33 @@ def generate_response(data: GenerateRequest):
             break
     
     # If CONVERSE, forward the entire assistant response (marked as conversation) to the target agent.
-    # New log type for conversation clarity
     if action == "converse" and location:
         get_or_create_session(location, "", "")
-        fwd_text = assistant_text  # Raw message without [Forwarded] tags
-        sessions[location].append({"role": "user", "content": f"[Conversation from {data.agent_id}]: {fwd_text}"})
-
+        
+        # Extract just the actual message content (without the action line)
+        message_lines = assistant_text.strip().split('\n')
+        # Remove the last line (which contains CONVERSE: action)
+        actual_message = '\n'.join(message_lines[:-1]).strip()
+        
+        # Create a more structured conversation prompt that encourages
+        # sharing specific information rather than just reasoning
+        if data.user_input.startswith("[CONVERSE mode with"):
+            # This is a continuation of an existing conversation
+            # Format that encourages direct information exchange
+            fwd_text = f"[Conversation from {data.agent_id}]: {actual_message}"
+        else:
+            # This is the start of a new conversation
+            # Let's explicitly tell them to share specific information they know
+            fwd_text = f"[Conversation from {data.agent_id}]: {actual_message}\n\nWhen responding, share any specific information you have about the situation that might be helpful."
+        
+        sessions[location].append({"role": "user", "content": fwd_text})
+        
+        # Log only the actual conversation content, not reasoning or commands
         log_event(data.agent_id, "conversation_message", {
             "to": location,
             "from": data.agent_id,
-            "message": fwd_text
+            "message": actual_message,
+            "timestamp": datetime.datetime.now().isoformat()
         })
     
     log_event(data.agent_id, "response", {"assistant_text": assistant_text, "action": action, "location": location})

@@ -474,16 +474,89 @@ def load_logs():
 async def view_logs(request: Request):
     logs = load_logs()
     selected_agent = request.query_params.get("agent")
+    conversation_partner = request.query_params.get("conversation_with")
+    view_mode = request.query_params.get("mode")
     agent_logs = []
     
-    if selected_agent and selected_agent in logs:
+    if view_mode == "combined_chat" and conversation_partner:
+        # This is a special combined chat view between two agents
+        # We'll collect the conversation messages between the two agents
+        conversation_logs = []
+        
+        if selected_agent in logs and conversation_partner in logs:
+            # Collect messages from both agents that are part of their conversation
+            for agent_id, agent_log_entries in logs.items():
+                if agent_id in [selected_agent, conversation_partner]:
+                    for log in agent_log_entries:
+                        if log["type"] == "conversation_message" and (
+                            (log["details"]["from"] == selected_agent and log["details"]["to"] == conversation_partner) or
+                            (log["details"]["from"] == conversation_partner and log["details"]["to"] == selected_agent)
+                        ):
+                            conversation_logs.append(log)
+                        elif log["type"] == "conversation_end" and (
+                            (log["details"].get("with_agent") == selected_agent and agent_id == conversation_partner) or
+                            (log["details"].get("with_agent") == conversation_partner and agent_id == selected_agent)
+                        ):
+                            conversation_logs.append(log)
+            
+            # Sort all conversation logs by timestamp
+            conversation_logs.sort(key=lambda x: x["timestamp"])
+            agent_logs = conversation_logs
+            
+        return templates.TemplateResponse("logs.html", {
+            "request": request,
+            "agents": logs.keys(),
+            "selected_agent": selected_agent,
+            "conversation_partner": conversation_partner,
+            "agent_logs": agent_logs,
+            "view_mode": "combined_chat"
+        })
+        
+    elif selected_agent and selected_agent in logs:
         agent_logs = logs[selected_agent]
+        
+        # Check if conversations should be enhanced with messages from other agents
+        if view_mode == "conversations":
+            # Add related conversation messages from other agents
+            for agent_id, agent_log_entries in logs.items():
+                if agent_id != selected_agent:
+                    for log in agent_log_entries:
+                        if (log["type"] == "conversation_message" and 
+                            (log["details"]["to"] == selected_agent or log["details"]["from"] == selected_agent)):
+                            # This is a conversation involving the selected agent
+                            agent_logs.append(log)
+                        elif (log["type"] == "conversation_end" and 
+                              log["details"].get("with_agent") == selected_agent):
+                            # This is a conversation end involving the selected agent
+                            agent_logs.append(log)
+            
+            # Sort all logs by timestamp
+            agent_logs.sort(key=lambda x: x["timestamp"])
+            
+        # Find the conversation partners for this agent
+        conversation_partners = set()
+        for log in agent_logs:
+            if log["type"] == "conversation_message":
+                if log["details"]["from"] == selected_agent:
+                    conversation_partners.add(log["details"]["to"])
+                elif log["details"]["to"] == selected_agent:
+                    conversation_partners.add(log["details"]["from"])
+                    
+        return templates.TemplateResponse("logs.html", {
+            "request": request,
+            "agents": logs.keys(),
+            "selected_agent": selected_agent,
+            "agent_logs": agent_logs,
+            "conversation_partners": conversation_partners,
+            "view_mode": view_mode
+        })
     
     return templates.TemplateResponse("logs.html", {
         "request": request,
         "agents": logs.keys(),
         "selected_agent": selected_agent,
-        "agent_logs": agent_logs
+        "agent_logs": [],
+        "view_mode": "none"
     })
 
 @app.post("/clear_logs")
